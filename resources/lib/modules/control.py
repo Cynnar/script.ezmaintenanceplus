@@ -1,181 +1,99 @@
-# -*- coding: utf-8 -*-
+import xbmc
+import xbmcaddon
+import xbmcplugin
+import xbmcgui
+import xbmcvfs
+import os
 
-'''
- CONTROL ROUTINES
-'''
+# --- Core Kodi Shortcuts ---
+ADDON = xbmcaddon.Addon()
+ADDON_ID = ADDON.getAddonInfo('id')
+ADDON_NAME = ADDON.getAddonInfo('name')
+ADDON_PATH = ADDON.getAddonInfo('path')
+DIALOG = xbmcgui.Dialog()
 
+# --- Path Translation (Modern) ---
+translatePath = xbmcvfs.translatePath
 
-import os,sys
+# --- Standard Paths ---
+HOME_PATH = translatePath('special://home/')
+ADDON_HOME = translatePath(f'special://home/addons/{ADDON_ID}/')
+USERDATA_PATH = translatePath('special://home/userdata/')
+ADDON_DATA_PATH = translatePath(os.path.join(USERDATA_PATH, 'addon_data', ADDON_ID))
+BACKUP_PATH = translatePath('special://home/backupdir/')
+PACKAGES_PATH = translatePath('special://home/addons/packages/')
 
-import xbmc,xbmcaddon,xbmcplugin,xbmcgui,xbmcvfs
-from resources.lib.modules.backtothefuture import PY2
+# --- Shortcut Functions ---
 
+def setting(id):
+    """Get a setting value."""
+    return ADDON.getSetting(id)
 
-integer = 1000
+def setSetting(id, value):
+    """Set a setting value."""
+    return ADDON.setSetting(id, value)
 
-lang = xbmcaddon.Addon().getLocalizedString
+def lang(id):
+    """Get localized string from addon strings.po."""
+    return ADDON.getLocalizedString(id)
 
-lang2 = xbmc.getLocalizedString
+def addonInfo(id):
+    """Get addon metadata."""
+    return ADDON.getAddonInfo(id)
 
-setting = xbmcaddon.Addon().getSetting
+def execute(cmd):
+    """Execute a Kodi built-in command."""
+    xbmc.executebuiltin(cmd)
 
-setSetting = xbmcaddon.Addon().setSetting
+def sleep(ms):
+    """Sleep for milliseconds."""
+    xbmc.sleep(ms)
 
-addon = xbmcaddon.Addon
-
-addItem = xbmcplugin.addDirectoryItem
-
-item = xbmcgui.ListItem
-
-directory = xbmcplugin.endOfDirectory
-
-content = xbmcplugin.setContent
-
-property = xbmcplugin.setProperty
-
-addonInfo = xbmcaddon.Addon().getAddonInfo
-
-infoLabel = xbmc.getInfoLabel
-
-condVisibility = xbmc.getCondVisibility
-
-jsonrpc = xbmc.executeJSONRPC
-
-window = xbmcgui.Window(10000)
-
-dialog = xbmcgui.Dialog()
-
-progressDialog = xbmcgui.DialogProgress()
-
-progressDialogBG = xbmcgui.DialogProgressBG()
-
-windowDialog = xbmcgui.WindowDialog()
-
-button = xbmcgui.ControlButton
-
-image = xbmcgui.ControlImage
-
-keyboard = xbmc.Keyboard
-
-sleep = xbmc.sleep
-
-execute = xbmc.executebuiltin
-
-skin = xbmc.getSkinDir()
-
-player = xbmc.Player()
-
-playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-
-resolve = xbmcplugin.setResolvedUrl
-
-openFile = xbmcvfs.File
-
-makeFile = xbmcvfs.mkdir
-
-deleteFile = xbmcvfs.delete
-
-deleteDir = xbmcvfs.rmdir
-
-listDir = xbmcvfs.listdir
-
-if PY2:
-    translatePath = xbmc.translatePath
-else:
-    translatePath = xbmcvfs.translatePath
-
-skinPath = translatePath('special://skin/')
-
-addonPath = translatePath(addonInfo('path'))
-
-AddonID = 'script.ezmaintenanceplus'
-artPath = translatePath(os.path.join('special://home/addons/' + AddonID, 'art'))
-# DIRECTORIES
-backupdir        =  translatePath(os.path.join('special://home/backupdir',''))
-packagesdir      =  translatePath(os.path.join('special://home/addons/packages',''))
-USERDATA         =  translatePath(os.path.join('special://home/userdata',''))
-ADDON_DATA       =  translatePath(os.path.join(USERDATA, 'addon_data'))
-HOME             =  translatePath('special://home/')
-HOME_ADDONS      =  translatePath('special://home/addons')
-
+# --- UI Helpers ---
 
 def addonIcon():
-    path = translatePath(os.path.join('special://home/addons/' + AddonID , 'icon.png'))
-    return path
-
-def addonThumb():
-    theme = appearance() ; art = artPath()
-    if not (art == None and theme in ['-', '']): return os.path.join(art, 'poster.png')
-    elif theme == '-': return 'DefaultFolder.png'
-    return addonInfo('icon')
-
-
-def addonPoster():
-    theme = appearance() ; art = artPath()
-    if not (art == None and theme in ['-', '']): return os.path.join(art, 'poster.png')
-    return 'DefaultVideo.png'
-
-
-def addonBanner():
-    theme = appearance() ; art = artPath()
-    if not (art == None and theme in ['-', '']): return os.path.join(art, 'banner.png')
-    return 'DefaultVideo.png'
-
+    return os.path.join(ADDON_HOME, 'icon.png')
 
 def addonFanart():
-    return translatePath(os.path.join('special://home/addons/' + AddonID , 'fanart.jpg'))
+    return os.path.join(ADDON_HOME, 'fanart.jpg')
 
-
-def addonNext():
-    theme = appearance() ; art = artPath()
-    if not (art == None and theme in ['-', '']): return os.path.join(art, 'next.png')
-    return 'DefaultVideo.png'
-
-
-
-def infoDialog(message, heading=addonInfo('name'), icon='', time=None, sound=False):
-    if time == None: time = 3000
-    else: time = int(time)
-    if icon == '': icon = addonIcon()
+def infoDialog(message, heading=ADDON_NAME, icon='', time=3000, sound=False):
+    if not icon: icon = addonIcon()
     elif icon == 'INFO': icon = xbmcgui.NOTIFICATION_INFO
     elif icon == 'WARNING': icon = xbmcgui.NOTIFICATION_WARNING
     elif icon == 'ERROR': icon = xbmcgui.NOTIFICATION_ERROR
-    dialog.notification(heading, message, icon, time, sound=sound)
+    
+    DIALOG.notification(heading, message, icon, time, sound=sound)
 
+def yesnoDialog(line1, line2='', line3='', heading=ADDON_NAME, nolabel='No', yeslabel='Yes'):
+    # In Kodi 19+, yesno dialog only takes one main message argument, so we join them.
+    message = f"{line1}\n{line2}\n{line3}".strip()
+    return DIALOG.yesno(heading, message, nolabel=nolabel, yeslabel=yeslabel)
 
-def yesnoDialog(line1, line2, line3, heading=addonInfo('name'), nolabel='', yeslabel=''):
-    return dialog.yesno(heading, line1 + '\n' + line2 + '\n' + line3, nolabel=nolabel, yeslabel=yeslabel)
+def selectDialog(list_items, heading=ADDON_NAME):
+    return DIALOG.select(heading, list_items)
 
-
-def selectDialog(list, heading=addonInfo('name')):
-    return dialog.select(heading, list)
-
-
-def openSettings(query=None, id=addonInfo('id')):
+def openSettings(query=None):
     try:
-        idle()
-        execute('Addon.OpenSettings(%s)' % id)
-        if query == None: raise Exception()
-        c, f = query.split('.')
-        execute('SetFocus(%i)' % (int(c) + 100))
-        execute('SetFocus(%i)' % (int(f) + 200))
+        ADDON.openSettings()
     except:
-        return
-
-
-def getCurrentViewId():
-    win = xbmcgui.Window(xbmcgui.getCurrentWindowId())
-    return str(win.getFocusId())
-
+        pass
 
 def refresh():
-    return execute('Container.Refresh')
+    execute('Container.Refresh')
 
 def busy():
-    return execute('ActivateWindow(busydialog)')
+    # Modern busy dialog handling
+    execute('ActivateWindow(busydialognocancel)')
 
 def idle():
-    return execute('Dialog.Close(busydialog)')
+    execute('Dialog.Close(busydialognocancel)')
+    # Fallback for older skins/versions just in case
+    execute('Dialog.Close(busydialog)')
 
-def queueItem():
-    return execute('Action(Queue)')
+# --- Directory & File Helpers (Wrappers for xbmcvfs) ---
+deleteFile = xbmcvfs.delete
+deleteDir = xbmcvfs.rmdir
+listDir = xbmcvfs.listdir
+makeDir = xbmcvfs.mkdir
+exists = xbmcvfs.exists

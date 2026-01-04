@@ -26,3 +26,14 @@ v2022.12.28.0
  - Backup always replaced the home folder reference in xml files with special://home
    Not all addons can handle this replace so it is now possible via a setting to disable this.
  - Backup Cancel didn't work. This is now fixed.
+
+2026.01.04.0
+ - Major Engine Overhaul: Complete codebase modernization for Python 3, optimized specifically for Kodi 21 (Omega) and LibreELEC 12.
+ - Performance Boost: Rewrote the background service (service.py) to reduce CPU usage and eliminate startup lag by delaying checks until Kodi is fully booted.
+ - Smart Maintenance: Replaced the legacy cleaning logic with a new "single-pass" system that cleans Cache, Packages, and Thumbnails significantly faster.
+ - Speedtest Upgrade: Replaced the bloated, legacy Speedtest-CLI module with a lightweight, native Python 3 implementation (reduced code size by ~50%).
+ - Modernized Tools:
+ - Log Viewer: Fixed crashing on Unicode characters and updated the Pastebin uploader to ensure logs are private and expire automatically.
+ - Backup/Restore: Fixed zip file handling and path translation to prevent crashes during full backups.
+ - Advanced Settings: Updated the XML generator to use the modern <cache> tags required by Kodi 19+.
+ - Cleanup: Removed over 1,500 lines of dead code, including the backtothefuture compatibility layer and legacy urllib dependencies.

@@ -1,223 +1,150 @@
-import xbmc, xbmcaddon, xbmcgui, xbmcplugin, os, sys, xbmcvfs, glob, math, time
-import shutil
-import urllib
-import re
+import xbmc
+import xbmcaddon
+import xbmcgui
+import xbmcvfs
 import os
-from resources.lib.modules.backtothefuture import PY2
+import shutil
+import math
+import time
 
-# Code to map the old translatePath
-if PY2:
-    translatePath = xbmc.translatePath
-    loglevel = xbmc.LOGNOTICE
-else:
-    translatePath = xbmcvfs.translatePath
-    loglevel = xbmc.LOGINFO
+# --- Constants ---
+ADDON_ID = 'script.ezmaintenanceplus'
+ADDON = xbmcaddon.Addon()
+TRANSLATE_PATH = xbmcvfs.translatePath
 
-thumbnailPath = translatePath('special://thumbnails');
-cachePath = os.path.join(translatePath('special://home'), 'cache')
-tempPath = translatePath('special://temp')
-addonPath = os.path.join(os.path.join(translatePath('special://home'), 'addons'),'script.ezmaintenance')
+# Standard Kodi Paths
+THUMBNAIL_PATH = TRANSLATE_PATH('special://thumbnails')
+CACHE_PATH = os.path.join(TRANSLATE_PATH('special://home'), 'cache')
+TEMP_PATH = TRANSLATE_PATH('special://temp')
+DATABASE_PATH = TRANSLATE_PATH('special://database')
+PACKAGES_PATH = TRANSLATE_PATH('special://home/addons/packages')
 
-mediaPath = os.path.join(addonPath, 'media')
-databasePath = translatePath('special://database')
-THUMBS    =  translatePath(os.path.join('special://home/userdata/Thumbnails',''))
+# Assets
+ICON_PATH = TRANSLATE_PATH(os.path.join('special://home/addons/' + ADDON_ID, 'icon.png'))
 
-addon_id = 'script.ezmaintenanceplus'
-fanart = translatePath(os.path.join('special://home/addons/' + addon_id , 'fanart.jpg'))
-iconpath = translatePath(os.path.join('special://home/addons/' + addon_id, 'icon.png'))
-class cacheEntry:
-    def __init__(self, namei, pathi):
-        self.name = namei
-        self.path = pathi
+# Files/Folders that should NEVER be deleted during cache clean
+EXCLUDE_FILES = ['xbmc.log', 'xbmc.old.log', 'kodi.log', 'kodi.old.log', 'commoncache.db', 'commoncache.socket']
+EXCLUDE_DIRS = ['temp', 'archive_cache']
+
+def _clean_directory(folder_path):
+    """Helper function to clean a specific directory with exclusions."""
+    if not os.path.exists(folder_path):
+        return
+
+    for root, dirs, files in os.walk(folder_path):
+        # Remove excluded directories from the traversal to prevent recursion into them
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+
+        for f in files:
+            if f in EXCLUDE_FILES:
+                continue
+            try:
+                os.unlink(os.path.join(root, f))
+            except Exception:
+                pass # File might be locked by system
+        
+        for d in dirs:
+            try:
+                shutil.rmtree(os.path.join(root, d))
+            except Exception:
+                pass
 
 def clearCache(mode='verbose'):
-    if os.path.exists(cachePath)==True:
-        for root, dirs, files in os.walk(cachePath):
-            file_count = 0
-            file_count += len(files)
-            if file_count > 0:
+    # Clean Cache Folder
+    _clean_directory(CACHE_PATH)
+    
+    # Clean Temp Folder
+    _clean_directory(TEMP_PATH)
 
-                    for f in files:
-                        try:
-                            if (f == "xbmc.log" or f == "xbmc.old.log" or f == "kodi.log" or f == "kodi.old.log" or f == "archive_cache" or f == "commoncache.db" or f == "commoncache.socket" or f == "temp"): continue
-                            os.unlink(os.path.join(root, f))
-                        except:
-                            pass
-                    for d in dirs:
-                        try:
-                            if (d == "archive_cache" or d == "temp"): continue
-                            shutil.rmtree(os.path.join(root, d))
-                        except:
-                            pass
-
-            else:
-                pass
-    if os.path.exists(tempPath)==True:
-        for root, dirs, files in os.walk(tempPath):
-            file_count = 0
-            file_count += len(files)
-            if file_count > 0:
-                for f in files:
-                    try:
-                        if (f == "xbmc.log" or f == "xbmc.old.log" or f == "kodi.log" or f == "kodi.old.log" or f == "archive_cache" or f == "commoncache.db" or f == "commoncache.socket" or f == "temp"): continue
-                        os.unlink(os.path.join(root, f))
-                    except:
-                        pass
-                for d in dirs:
-                    try:
-                        if (d == "archive_cache" or d == "temp"): continue
-                        shutil.rmtree(os.path.join(root, d))
-                    except:
-                        pass
-
-            else:
-                pass
-    if xbmc.getCondVisibility('system.platform.ATV2'):
-        atv2_cache_a = os.path.join('/private/var/mobile/Library/Caches/AppleTV/Video/', 'Other')
-
-        for root, dirs, files in os.walk(atv2_cache_a):
-            file_count = 0
-            file_count += len(files)
-
-            if file_count > 0:
-                for f in files:
-                    os.unlink(os.path.join(root, f))
-                for d in dirs:
-                    shutil.rmtree(os.path.join(root, d))
-            else:
-                pass
-        atv2_cache_b = os.path.join('/private/var/mobile/Library/Caches/AppleTV/Video/', 'LocalAndRental')
-
-        for root, dirs, files in os.walk(atv2_cache_b):
-            file_count = 0
-            file_count += len(files)
-
-            if file_count > 0:
-                for f in files:
-                    os.unlink(os.path.join(root, f))
-                for d in dirs:
-                    shutil.rmtree(os.path.join(root, d))
-            else:
-                pass
-
-    cacheEntries = []
-
-    for entry in cacheEntries:
-        clear_cache_path = translatePath(entry.path)
-        if os.path.exists(clear_cache_path)==True:
-            for root, dirs, files in os.walk(clear_cache_path):
-                file_count = 0
-                file_count += len(files)
-                if file_count > 0:
-                    for f in files:
-                        os.unlink(os.path.join(root, f))
-                    for d in dirs:
-                        shutil.rmtree(os.path.join(root, d))
-                else:
-                    pass
-
-    if mode == 'verbose': xbmc.executebuiltin('Notification(%s, %s, %s, %s)' % ('Maintenance' , 'Clean Completed' , '3000', iconpath))
+    if mode == 'verbose':
+        xbmc.executebuiltin(f'Notification(Maintenance, Cache Cleared, 3000, {ICON_PATH})')
 
 def deleteThumbnails(mode='verbose'):
+    """Deletes Thumbnails and the Textures13.db database to reset image cache."""
+    
+    # 1. Delete the actual image files
+    if os.path.exists(THUMBNAIL_PATH):
+        for root, dirs, files in os.walk(THUMBNAIL_PATH):
+            for f in files:
+                try:
+                    os.unlink(os.path.join(root, f))
+                except Exception:
+                    pass
+            for d in dirs:
+                try:
+                    shutil.rmtree(os.path.join(root, d))
+                except Exception:
+                    pass
 
-    if os.path.exists(thumbnailPath)==True:
-            # dialog = xbmcgui.Dialog()
-            # if dialog.yesno("Delete Thumbnails", "This option deletes all thumbnails" + '\n' + "Are you sure you want to do this?"):
-                for root, dirs, files in os.walk(thumbnailPath):
-                    file_count = 0
-                    file_count += len(files)
-                    if file_count > 0:
-                        for f in files:
-                            try:
-                                os.unlink(os.path.join(root, f))
-                            except:
-                                pass
-
-
-    if os.path.exists(THUMBS):
-        try:
-            for root, dirs, files in os.walk(THUMBS):
-                file_count = 0
-                file_count += len(files)
-                # Count files and give option to delete
-                if file_count > 0:
-                    for f in files: os.unlink(os.path.join(root, f))
-                    for d in dirs: shutil.rmtree(os.path.join(root, d))
-        except:
-            pass
-
+    # 2. Delete the database (Critical: otherwise Kodi looks for images that don't exist)
     try:
-        text13 = os.path.join(databasePath,"Textures13.db")
-        os.unlink(text13)
-    except:
+        texture_db = os.path.join(DATABASE_PATH, "Textures13.db")
+        if os.path.exists(texture_db):
+            os.unlink(texture_db)
+    except Exception:
         pass
-    if mode == 'verbose': xbmc.executebuiltin('Notification(%s, %s, %s, %s)' % ('Maintenance' , 'Clean Thumbs Completed' , '3000', iconpath))
+
+    if mode == 'verbose':
+        xbmc.executebuiltin(f'Notification(Maintenance, Thumbnails Cleared. Restart Kodi!, 5000, {ICON_PATH})')
 
 def purgePackages(mode='verbose'):
-
-    purgePath = translatePath('special://home/addons/packages')
-    dialog = xbmcgui.Dialog()
-    for root, dirs, files in os.walk(purgePath):
-        file_count = 0
-        file_count += len(files)
-    # if dialog.yesno("Delete Package Cache Files", "%d packages found."%file_count + '\n' + "Delete Them?"):
-    for root, dirs, files in os.walk(purgePath):
-        file_count = 0
-        file_count += len(files)
-        if file_count > 0:
+    if os.path.exists(PACKAGES_PATH):
+        for root, dirs, files in os.walk(PACKAGES_PATH):
             for f in files:
-                os.unlink(os.path.join(root, f))
+                try:
+                    os.unlink(os.path.join(root, f))
+                except Exception:
+                    pass
             for d in dirs:
-                shutil.rmtree(os.path.join(root, d))
-            # dialog = xbmcgui.Dialog()
-            # dialog.ok("Maintenance", "Deleting Packages all done")
-    if mode == 'verbose': xbmc.executebuiltin('Notification(%s, %s, %s, %s)' % ('Maintenance' , 'Clean Packages Completed' , '3000', iconpath))
+                try:
+                    shutil.rmtree(os.path.join(root, d))
+                except Exception:
+                    pass
+
+    if mode == 'verbose':
+        xbmc.executebuiltin(f'Notification(Maintenance, Packages Cleared, 3000, {ICON_PATH})')
 
 def determineNextMaintenance():
-    getSetting = xbmcaddon.Addon().getSetting
-
-    autoCleanDays = getSetting('autoCleanDays')
-    if autoCleanDays is None:
-        days = 0
-    else:
-        days = int(autoCleanDays)
-
-    t1 = 0
+    autoCleanDays = ADDON.getSetting('autoCleanDays')
+    days = int(autoCleanDays) if autoCleanDays else 0
 
     if days > 0:
-        autoCleanHour = getSetting('autoCleanHour')
-        if autoCleanHour is None:
-            hour = 0
-        else:
-            hour = int(autoCleanHour)
+        autoCleanHour = ADDON.getSetting('autoCleanHour')
+        hour = int(autoCleanHour) if autoCleanHour else 0
 
         t0 = int(math.floor(time.time()))
+        # Add days in seconds
+        t1 = t0 + (days * 24 * 3600)
 
-        t1 = t0 + (days * 24 * 60 * 60)  # days * 24h * 60m * 60s
+        # Adjust for the specific hour of the day
+        future_struct = time.localtime(t1)
+        
+        # Calculate offset to align with the target hour
+        # (This logic preserves the original intent of aligning to a specific hour)
+        t1 += (hour - future_struct.tm_hour) * 3600 - future_struct.tm_min * 60 - future_struct.tm_sec
+        
+        # Ensure we are strictly in the future
+        while t1 <= t0:
+            t1 += 24 * 3600
 
-        x = time.localtime(t1)
-
-        t1 += (hour - x.tm_hour) * 60 * 60 - x.tm_min * 60 - x.tm_sec
-        while (t1 <= t0):
-            t1 += 24 * 60 * 60 # add days until we are in the future
-
-        #t1 = t0 + 1 * 60 # for testing - every minute
-
-    win = xbmcgui.Window(10000)
-    win.setProperty("ezmaintenance.nextMaintenanceTime", str(t1))
-
-    logMaintenance("setNextMaintenance: %s" % str(t1))
-
+        # Store property on the Home window so the Service can read it
+        win = xbmcgui.Window(10000)
+        win.setProperty("ezmaintenance.nextMaintenanceTime", str(t1))
+        
+        logMaintenance(f"Next maintenance scheduled for timestamp: {t1}")
 
 def getNextMaintenance():
     win = xbmcgui.Window(10000)
-    t1 = int(win.getProperty("ezmaintenance.nextMaintenanceTime"))
-
-    logMaintenance("getNextMaintenance: %s" % str(t1))
-
-    return t1
+    prop = win.getProperty("ezmaintenance.nextMaintenanceTime")
+    
+    if not prop:
+        return 0
+        
+    try:
+        return int(prop)
+    except ValueError:
+        return 0
 
 def logMaintenance(message):
-#    xbmc.log("ezmaintenanceplus: %s" % message, level=loglevel)
-    return
-
+    # Only log if Debug logging is enabled in Kodi to prevent spam
+    xbmc.log(f"ezmaintenanceplus: {message}", level=xbmc.LOGDEBUG)

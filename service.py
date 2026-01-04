@@ -1,101 +1,118 @@
-import xbmc, xbmcaddon, xbmcgui, xbmcplugin, os, sys, xbmcvfs, glob
-import shutil
-import urllib
-import re
+import xbmc
+import xbmcaddon
+import xbmcgui
+import xbmcvfs
+import os
 import time
-from resources.lib.modules.backtothefuture import PY2
 from resources.lib.modules import maintenance
 
-# Code to map the old translatePath
-if PY2:
-    translatePath = xbmc.translatePath
-    loglevel = xbmc.LOGNOTICE
-else:
-    translatePath = xbmcvfs.translatePath
-    loglevel = xbmc.LOGINFO
+# --- Constants & Setup ---
+ADDON_ID = 'script.ezmaintenanceplus'
+ADDON = xbmcaddon.Addon()
+# Modern path translation for Kodi 19+
+TRANSLATE_PATH = xbmcvfs.translatePath
+PACKAGES_DIR = TRANSLATE_PATH(os.path.join('special://home/addons/packages', ''))
+THUMBNAILS_DIR = TRANSLATE_PATH('special://home/userdata/Thumbnails')
+ICON_PATH = TRANSLATE_PATH(os.path.join('special://home/addons/' + ADDON_ID, 'icon.png'))
 
-AddonID ='script.ezmaintenanceplus'
-packagesdir    =  translatePath(os.path.join('special://home/addons/packages',''))
-thumbnails    =  translatePath('special://home/userdata/Thumbnails')
-dialog = xbmcgui.Dialog()
-setting = xbmcaddon.Addon().getSetting
-iconpath = translatePath(os.path.join('special://home/addons/' + AddonID,'icon.png'))
-# if setting('autoclean') == 'true':
-    # control.clearCache()
+def get_setting(setting_id):
+    return ADDON.getSetting(setting_id)
 
-notify_mode = setting('notify_mode')
-auto_clean  = setting('startup.cache')
-filesize = int(setting('filesize_alert'))
-filesize_thumb = int(setting('filesizethumb_alert'))
-maxpackage_zips = int(setting('packagenumbers_alert'))
+def get_folder_size(start_path):
+    total_size = 0
+    file_count = 0
+    for dirpath, dirnames, filenames in os.walk(start_path):
+        for f in filenames:
+            file_count += 1
+            fp = os.path.join(dirpath, f)
+            # Skip if broken link
+            if not os.path.islink(fp):
+                total_size += os.path.getsize(fp)
+    return total_size, file_count
 
-total_size2 = 0
-total_size = 0
-count = 0
+def check_startup_maintenance():
+    """Performs the heavy file system checks once at startup."""
+    
+    # Settings
+    notify_mode = get_setting('notify_mode')
+    auto_clean_cache = get_setting('startup.cache')
+    filesize_alert_mb = int(get_setting('filesize_alert'))
+    thumbsize_alert_mb = int(get_setting('filesizethumb_alert'))
+    
+    # 1. Check Packages Folder
+    pkg_size_bytes, pkg_count = get_folder_size(PACKAGES_DIR)
+    pkg_size_mb = pkg_size_bytes / 1024000.0
+    
+    if pkg_size_mb > filesize_alert_mb:
+        msg = (f"[COLOR=red]Autocleaner[/COLOR]\n"
+               f"The packages folder is [COLOR red]{pkg_size_mb:.0f} MB[/COLOR] - "
+               f"[COLOR red]{pkg_count}[/COLOR] zip files\n"
+               f"Do you want to clean it now?")
+        
+        if xbmcgui.Dialog().yesno("EZ Maintenance+", msg, yeslabel='Yes', nolabel='No'):
+            maintenance.purgePackages()
 
-for dirpath, dirnames, filenames in os.walk(packagesdir):
-    count = 0
-    for f in filenames:
-        count += 1
-        fp = os.path.join(dirpath, f)
-        total_size += os.path.getsize(fp)
-total_sizetext = "%.0f" % (total_size/1024000.0)
+    # 2. Check Thumbnails Folder
+    thumb_size_bytes, _ = get_folder_size(THUMBNAILS_DIR)
+    thumb_size_mb = thumb_size_bytes / 1024000.0
 
-if int(total_sizetext) > filesize:
-    choice2 = xbmcgui.Dialog().yesno("[COLOR=red]Autocleaner[/COLOR]", 'The packages folder is [COLOR red]' + str(total_sizetext) +' MB [/COLOR] - [COLOR red]' + str(count) + '[/COLOR] zip files' + '\n' + 'The folder can be cleaned up without issues to save space...' + '\n' + 'Do you want to clean it now?', yeslabel='Yes',nolabel='No')
-    if choice2 == 1:
-        maintenance.purgePackages()
+    if thumb_size_mb > thumbsize_alert_mb:
+        msg = (f"[COLOR=red]Autocleaner[/COLOR]\n"
+               f"The images folder is [COLOR red]{thumb_size_mb:.0f} MB[/COLOR]\n"
+               f"Do you want to clean it now?")
+        
+        if xbmcgui.Dialog().yesno("EZ Maintenance+", msg, yeslabel='Yes', nolabel='No'):
+            maintenance.deleteThumbnails()
 
-for dirpath2, dirnames2, filenames2 in os.walk(thumbnails):
-    for f2 in filenames2:
-        fp2 = os.path.join(dirpath2, f2)
-        total_size2 += os.path.getsize(fp2)
-total_sizetext2 = "%.0f" % (total_size2/1024000.0)
+    # 3. Notification
+    if notify_mode == 'true':
+        msg = f"Packages: {pkg_size_mb:.0f} MB - Images: {thumb_size_mb:.0f} MB"
+        xbmc.executebuiltin(f'Notification(Maintenance Status, {msg}, 5000, {ICON_PATH})')
 
-if int(total_sizetext2) > filesize_thumb:
-    choice2 = xbmcgui.Dialog().yesno("[COLOR=red]Autocleaner[/COLOR]", 'The images folder is [COLOR red]' + str(total_sizetext2) + ' MB   [/COLOR]' + '\n' + 'The folder can be cleaned up without issues to save space...' + '\n' + 'Do you want to clean it now?', yeslabel='Yes',nolabel='No')
-    if choice2 == 1:
-        maintenance.deleteThumbnails()
+    # 4. Auto Clean Cache (if enabled)
+    if auto_clean_cache == 'true':
+        maintenance.clearCache()
 
-total_sizetext = "%.0f" % (total_size/1024000.0)
-total_sizetext2 = "%.0f" % (total_size2/1024000.0)
+    maintenance.logMaintenance("Service startup checks complete")
 
-if notify_mode == 'true': xbmc.executebuiltin('Notification(%s, %s, %s, %s)' % ('Maintenance Status',  'Packages: '+ str(total_sizetext) +  ' MB'  ' - Images: ' + str(total_sizetext2) + ' MB' , '5000', iconpath))
-time.sleep(3)
-if auto_clean  == 'true': maintenance.clearCache()
 
-maintenance.logMaintenance("Service started")
-
-class Monitor(xbmc.Monitor):
-
+class MaintenanceMonitor(xbmc.Monitor):
     def __init__(self):
-        xbmc.Monitor.__init__(self)
-        maintenance.logMaintenance("Monitor init")
+        super().__init__()
+        maintenance.logMaintenance("Monitor initialized")
         maintenance.determineNextMaintenance()
 
     def onSettingsChanged(self):
-        maintenance.logMaintenance("onSettingsChanged")
+        maintenance.logMaintenance("Settings changed, updating schedule")
         maintenance.determineNextMaintenance()
 
+
 if __name__ == '__main__':
+    monitor = MaintenanceMonitor()
 
-    monitor = Monitor()
+    # EFFICIENCY FIX: Wait 10 seconds before doing heavy IO checks.
+    # This prevents the addon from slowing down the Kodi boot process.
+    if not monitor.waitForAbort(10):
+        
+        # Run the startup checks (Packages/Thumbnails)
+        check_startup_maintenance()
 
-    while not monitor.abortRequested():
-        # Sleep/wait for abort for 10 seconds
-        if monitor.waitForAbort(10):
-            # Abort was requested while waiting. We should exit
-            break
-        maintenance.logMaintenance("monitor loop")
-        if not xbmc.Player().isPlayingVideo():
-            nextMaintenance = maintenance.getNextMaintenance()
-            maintenance.logMaintenance("time.time() = %s, nextMaintenance = %s" % (str(time.time()), str(nextMaintenance)))
-            if nextMaintenance > 0 and time.time() >= nextMaintenance:
-                xbmc.log("ezmaintenanceplus: AutoClean started", level=loglevel)
-                maintenance.clearCache()
-                xbmc.log("ezmaintenanceplus: AutoClean done", level=loglevel)
-                maintenance.determineNextMaintenance()
-                #xbmc.executebuiltin('Notification(%s, %s, %s, %s)' % ('Maintenance' , 'Clean Completed' , '3000', iconpath))
+        # Main Service Loop
+        while not monitor.abortRequested():
+            
+            # EFFICIENCY FIX: Increased wait time from 10s to 60s.
+            # Maintenance does not need to be checked every 10 seconds.
+            if monitor.waitForAbort(60):
+                break
 
-    del monitor
-
+            if not xbmc.Player().isPlayingVideo():
+                next_maintenance = maintenance.getNextMaintenance()
+                
+                # Check if it's time to run scheduled maintenance
+                if next_maintenance > 0 and time.time() >= next_maintenance:
+                    xbmc.log("ezmaintenanceplus: Scheduled AutoClean started", level=xbmc.LOGINFO)
+                    maintenance.clearCache()
+                    xbmc.log("ezmaintenanceplus: Scheduled AutoClean done", level=xbmc.LOGINFO)
+                    
+                    # Reset the timer
+                    maintenance.determineNextMaintenance()

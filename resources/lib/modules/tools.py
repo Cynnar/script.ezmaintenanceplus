@@ -1,113 +1,90 @@
-"""
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
-import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs,os,sys
-import urllib
+import xbmc
+import xbmcaddon
+import xbmcgui
+import xbmcvfs
+import os
 import re
-import time
-import zipfile
 from math import trunc
-from resources.lib.modules import control
-from datetime import datetime
-from resources.lib.modules.backtothefuture import unicode, PY2
 
-if PY2:
-    FancyURLopener = urllib.FancyURLopener
-    translatePath = xbmc.translatePath
-else:
-    FancyURLopener = urllib.request.FancyURLopener
-    translatePath = xbmcvfs.translatePath
+# --- Constants ---
+ADDON = xbmcaddon.Addon()
+ADDON_TITLE = "EZ Maintenance+"
+DIALOG = xbmcgui.Dialog()
+TRANSLATE_PATH = xbmcvfs.translatePath
+XML_FILE = TRANSLATE_PATH('special://home/userdata/advancedsettings.xml')
 
-dp           = xbmcgui.DialogProgress()
-dialog       = xbmcgui.Dialog()
-addonInfo    = xbmcaddon.Addon().getAddonInfo
-
-AddonTitle="EZ Maintenance+"
-AddonID ='script.ezmaintenanceplus'
-
-
-def xml_data_advSettings_old(size):
-    xml_data="""<advancedsettings>
-      <network>
-        <curlclienttimeout>10</curlclienttimeout>
-        <curllowspeedtime>20</curllowspeedtime>
-        <curlretries>2</curlretries>
-        <cachemembuffersize>%s</cachemembuffersize>
-        <buffermode>2</buffermode>
-        <readbufferfactor>20</readbufferfactor>
-      </network>
-</advancedsettings>""" % size
-    return xml_data
-
-def xml_data_advSettings_New(size):
-    xml_data="""<advancedsettings>
-      <network>
-        <curlclienttimeout>10</curlclienttimeout>
-        <curllowspeedtime>20</curllowspeedtime>
-        <curlretries>2</curlretries>
-      </network>
-      <cache>
-        <memorysize>%s</memorysize>
-        <buffermode>2</buffermode>
-        <readfactor>20</readfactor>
-      </cache>
-</advancedsettings>""" % size
-    return xml_data
+def get_xml_template(memory_size):
+    """Returns modern advancedsettings.xml structure for Kodi 17+"""
+    return f"""<advancedsettings>
+  <network>
+    <curlclienttimeout>10</curlclienttimeout>
+    <curllowspeedtime>20</curllowspeedtime>
+    <curlretries>2</curlretries>
+  </network>
+  <cache>
+    <memorysize>{memory_size}</memorysize>
+    <buffermode>2</buffermode>
+    <readfactor>20</readfactor>
+  </cache>
+</advancedsettings>"""
 
 def advancedSettings():
-    XML_FILE   =  translatePath(os.path.join('special://home/userdata' , 'advancedsettings.xml'))
-    MEM        =  xbmc.getInfoLabel("System.Memory(total)")
-    FREEMEM    =  xbmc.getInfoLabel("System.FreeMemory")
-    BUFFER_F   =  re.sub('[^0-9]','',FREEMEM)
-    BUFFER_F   = int(BUFFER_F) / 3
-    BUFFERSIZE = trunc(BUFFER_F * 1024 * 1024)
-    try: KODIV        =  float(xbmc.getInfoLabel("System.BuildVersion")[:4])
-    except: KODIV = 16
+    # 1. Calculate Optimal Buffer Size
+    # Get Free Memory string (e.g., "2048MB")
+    free_mem_str = xbmc.getInfoLabel("System.FreeMemory")
+    
+    # Extract digits
+    clean_mem = re.sub('[^0-9]', '', free_mem_str)
+    
+    if not clean_mem:
+        DIALOG.ok(ADDON_TITLE, "Could not detect system memory.\nPlease set buffer size manually.")
+        optimal_mb = 0
+        optimal_bytes = 0
+    else:
+        free_mem_mb = int(clean_mem)
+        # Rule of thumb: Use 1/3 of Free RAM for buffer
+        optimal_mb = round(free_mem_mb / 3)
+        optimal_bytes = trunc(optimal_mb * 1024 * 1024)
 
+    # 2. Ask User
+    msg = (f"Based on your free Memory ({free_mem_mb} MB),\n"
+           f"your optimal buffer size is: {optimal_mb} MB ({optimal_bytes} Bytes)\n\n"
+           "This will overwrite your current advancedsettings.xml!")
+    
+    choice = DIALOG.yesno(ADDON_TITLE, msg, yeslabel='Use Optimal', nolabel='Enter Manually')
 
-    """,customlabel='Cancel'"""
-    choice = dialog.yesno(AddonTitle, 'Based on your free Memory your optimal buffersize is: \n' + str(BUFFERSIZE) + ' Bytes' + ' ('  + str(round(BUFFER_F)) + ' MB)' + '\n' + 'Note that your current advanced settings will be overwritten!' + '\n' + 'Choose an Option below or press ESC ESC to abort.', yeslabel='Use Optimal',nolabel='Input a Value' )
-    if choice == 1:
-        with open(XML_FILE, "w") as f:
-            if KODIV >= 17: xml_data = xml_data_advSettings_New(str(BUFFERSIZE))
-            else: xml_data = xml_data_advSettings_old(str(BUFFERSIZE))
+    final_bytes = None
 
-            f.write(xml_data)
-            dialog.ok(AddonTitle,'Buffer Size Set to: ' + str(BUFFERSIZE) + '\n' + 'Please restart Kodi for settings to apply.')
+    if choice == 1: # Use Optimal
+        final_bytes = str(optimal_bytes)
+        
+    else: # Manual Input
+        user_input = _get_keyboard(default=str(optimal_bytes), heading="Enter Buffer Size in Bytes")
+        if user_input:
+            if user_input.isdigit():
+                final_bytes = user_input
+            else:
+                DIALOG.ok(ADDON_TITLE, "Invalid input. Please enter a number.")
+                return
 
-    elif choice == 0:
-        BUFFERSIZE = _get_keyboard( default=str(BUFFERSIZE), heading="INPUT BUFFER SIZE (Bytes) or ESC/Cancel to abort", cancel="-")
-        if BUFFERSIZE != "-":
-            with open(XML_FILE, "w") as f:
-                if KODIV >= 17: xml_data = xml_data_advSettings_New(str(BUFFERSIZE))
-                else: xml_data = xml_data_advSettings_old(str(BUFFERSIZE))
-                f.write(xml_data)
-                dialog.ok(AddonTitle,'Buffer Size Set to: ' + str(BUFFERSIZE) + '\n' + 'Please restart Kodi for settings to apply.')
+    # 3. Write File
+    if final_bytes:
+        try:
+            xml_content = get_xml_template(final_bytes)
+            
+            with open(XML_FILE, "w", encoding='utf-8') as f:
+                f.write(xml_content)
+                
+            DIALOG.ok(ADDON_TITLE, f"Buffer Size Set to: {final_bytes} Bytes\nRestart Kodi to apply.")
+            
+        except Exception as e:
+            DIALOG.ok(ADDON_TITLE, f"Error writing file:\n{str(e)}")
 
-
-def open_Settings():
-    open_Settings = xbmcaddon.Addon(id=AddonID).openSettings()
-
-def _get_keyboard( default="", heading="", hidden=False, cancel="" ):
-    """ shows a keyboard and returns a value """
-    if cancel == "":
-        cancel=default
-    keyboard = xbmc.Keyboard( default, heading, hidden )
+def _get_keyboard(default="", heading="", hidden=False):
+    """Shows a keyboard and returns the value."""
+    keyboard = xbmc.Keyboard(default, heading, hidden)
     keyboard.doModal()
-    if ( keyboard.isConfirmed() ):
-        return unicode( keyboard.getText())
-    return cancel
-
-
-##############################    END    #########################################
+    
+    if keyboard.isConfirmed():
+        return keyboard.getText()
+    return None

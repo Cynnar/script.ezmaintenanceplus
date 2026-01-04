@@ -1,354 +1,360 @@
-"""
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
-import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs,os,sys
-import urllib
+import xbmc
+import xbmcaddon
+import xbmcgui
+import xbmcvfs
+import os
+import sys
+import urllib.request
+import urllib.parse
 import re
 import time
 import zipfile
-from resources.lib.modules import control, maintenance, tools
 from datetime import datetime
-from resources.lib.modules.backtothefuture import unicode, PY2
 
-if PY2:
-    FancyURLopener = urllib.FancyURLopener
-    from io import open as open
-    translatePath = xbmc.translatePath
-else:
-    FancyURLopener = urllib.request.FancyURLopener
-    translatePath = xbmcvfs.translatePath
-    unicode = str
+# Internal modules
+from resources.lib.modules import control, maintenance
 
-dp           = xbmcgui.DialogProgress()
-dialog       = xbmcgui.Dialog()
-addonInfo    = xbmcaddon.Addon().getAddonInfo
+# NOTE: We are removing 'tools' import if it isn't used, 
+# but checking the code, it uses 'tools._get_keyboard'.
+# We need to make sure tools.py is updated next.
+from resources.lib.modules import tools 
+# We also need skinSwitch for the skinswap function
+from resources.lib.modules import skinSwitch
 
-AddonTitle="EZ Maintenance+"
-AddonID ='script.ezmaintenanceplus'
+# --- Constants ---
+ADDON = xbmcaddon.Addon()
+ADDON_ID = ADDON.getAddonInfo('id')
+ADDON_TITLE = "EZ Maintenance+"
+DIALOG = xbmcgui.Dialog()
+TRANSLATE_PATH = xbmcvfs.translatePath
 
+# Standard Paths
+HOME_PATH = TRANSLATE_PATH('special://home/')
+ADDON_HOME = TRANSLATE_PATH('special://home/addons/')
+USERDATA_PATH = TRANSLATE_PATH('special://home/userdata/')
 
-def get_Kodi_Version():
-    try: KODIV        =  float(xbmc.getInfoLabel("System.BuildVersion")[:4])
-    except: KODIV = 0
-    return KODIV
-
-def open_Settings():
-    open_Settings = xbmcaddon.Addon(id=AddonID).openSettings()
-
-def ENABLE_ADDONS():
-    for root, dirs, files in os.walk(HOME_ADDONS,topdown=True):
-        dirs[:] = [d for d in dirs]
-        for addon_name in dirs:
-                if not any(value in addon_name for value in EXCLUDES_ADDONS):
-                    # addLink(addon_name,'url',100,ART+'tool.png',FANART,'')
-                    try:
-                        query = '{"jsonrpc":"2.0", "method":"Addons.SetAddonEnabled","params":{"addonid":"%s","enabled":true}, "id":1}' % (addon_name)
-                        xbmc.executeJSONRPC(query)
-
-                    except:
-                        pass
+# Exclusions
+EXCLUDES_ADDONS = ['notification', 'packages']
 
 
-def FIX_SPECIAL():
+def get_kodi_version():
+    try:
+        return float(xbmc.getInfoLabel("System.BuildVersion")[:4])
+    except:
+        return 0.0
 
-    HOME =  translatePath('special://home')
-    dp.create(AddonTitle,"Renaming paths...")
-    url = translatePath('special://userdata')
-    for root, dirs, files in os.walk(url):
+def fix_special_paths():
+    """
+    Replaces absolute paths in XML files with special://home/ 
+    to make backups portable across devices.
+    """
+    dp = xbmcgui.DialogProgress()
+    dp.create(ADDON_TITLE, "Renaming paths...")
+    
+    userdata_dir = TRANSLATE_PATH('special://userdata')
+    # We want to replace the resolved home path with the special variable
+    home_resolved = TRANSLATE_PATH('special://home')
+    
+    files_processed = 0
+    
+    for root, dirs, files in os.walk(userdata_dir):
         for file in files:
             if file.endswith(".xml"):
-                 if PY2:
-                     dp.update(0,"Fixing", "[COLOR dodgerblue]" + file + "[/COLOR]")
-                 else:
-                     dp.update(0,"Fixing" + '\n' + "[COLOR dodgerblue]" + file + "[/COLOR]")
-                 try:
-                     a = open((os.path.join(root, file)), 'r', encoding='utf-8').read()
-                     b = a.replace(HOME, 'special://home/')
-                     f = open((os.path.join(root, file)), mode='w', encoding='utf-8')
-                     f.write(unicode(b))
-                     f.close()
-                 except:
-                     try:
-                         a = open((os.path.join(root, file)), 'r').read()
-                         b = a.replace(HOME, 'special://home/')
-                         f = open((os.path.join(root, file)), mode='w')
-                         f.write(unicode(b))
-                         f.close()
-                     except:
-                         pass
+                files_processed += 1
+                file_path = os.path.join(root, file)
+                
+                dp.update(0, f"Fixing\n[COLOR dodgerblue]{file}[/COLOR]")
+                
+                try:
+                    # Read
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
+                    # Replace
+                    if home_resolved in content:
+                        new_content = content.replace(home_resolved, 'special://home/')
+                        
+                        # Write
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+                except Exception:
+                    pass
+    
+    dp.close()
 
 def skinswap():
+    current_skin = xbmc.getSkinDir()
+    kodi_version = get_kodi_version()
+    swapped = False
 
-    skin         =  xbmc.getSkinDir()
-    KODIV        =  get_Kodi_Version()
-    skinswapped = 0
-    from resources.lib.modules import skinSwitch
-
-    #SWITCH THE SKIN IF THE CURRENT SKIN IS NOT CONFLUENCE
-    if skin not in ['skin.confluence','skin.estuary']:
-        choice = xbmcgui.Dialog().yesno(AddonTitle, 'We can try to reset to the default Kodi Skin...' + '\n' + 'Do you want to Proceed?', yeslabel='Yes',nolabel='No')
-        if choice == 1:
-
-            skin = 'skin.estuary' if KODIV >= 17 else 'skin.confluence'
-            skinSwitch.swapSkins(skin)
-            skinswapped = 1
+    # Switch if not already on default
+    if current_skin not in ['skin.confluence', 'skin.estuary']:
+        if DIALOG.yesno(ADDON_TITLE, 'Reset to default Kodi Skin (Estuary)?'):
+            target_skin = 'skin.estuary' if kodi_version >= 17 else 'skin.confluence'
+            
+            # Call the skinSwitch module
+            skinSwitch.swapSkins(target_skin)
+            swapped = True
             time.sleep(1)
 
-    #IF A SKIN SWAP HAS HAPPENED CHECK IF AN OK DIALOG (CONFLUENCE INFO SCREEN) IS PRESENT, PRESS OK IF IT IS PRESENT
-    if skinswapped == 1:
-        if not xbmc.getCondVisibility("Window.isVisible(yesnodialog)"):
-            xbmc.executebuiltin( "Action(Select)" )
+    # Automated handling of the confirmation dialog
+    if swapped:
+        # Wait for "Keep this skin?" dialog
+        timeout = 0
+        while not xbmc.getCondVisibility("Window.isVisible(yesnodialog)") and timeout < 10:
+            time.sleep(1)
+            timeout += 1
 
-    #IF THERE IS NOT A YES NO DIALOG (THE SCREEN ASKING YOU TO SWITCH TO CONFLUENCE) THEN SLEEP UNTIL IT APPEARS
-    if skinswapped == 1:
-        while not xbmc.getCondVisibility("Window.isVisible(yesnodialog)"):
+        # Interact with the dialog
+        if xbmc.getCondVisibility("Window.isVisible(yesnodialog)"):
+            # Move selection and confirm
+            xbmc.executebuiltin("Action(Left)")
+            xbmc.executebuiltin("Action(Select)")
             time.sleep(1)
 
-    #WHILE THE YES NO DIALOG IS PRESENT PRESS LEFT AND THEN SELECT TO CONFIRM THE SWITCH TO CONFLUENCE.
-    if skinswapped == 1:
-        while xbmc.getCondVisibility("Window.isVisible(yesnodialog)"):
-            xbmc.executebuiltin( "Action(Left)" )
-            xbmc.executebuiltin( "Action(Select)" )
-            time.sleep(1)
-
-    skin         =  xbmc.getSkinDir()
-
-    #CHECK IF THE SKIN IS NOT CONFLUENCE
-    if skin not in ['skin.confluence','skin.estuary']:
-        choice = xbmcgui.Dialog().yesno(AddonTitle, '[COLOR lightskyblue][B]ERROR: AUTOSWITCH WAS NOT SUCCESFULL[/B][/COLOR]' + '\n' + '[COLOR lightskyblue][B]CLICK YES TO MANUALLY SWITCH TO CONFLUENCE NOW[/B][/COLOR]' + '\n' + '[COLOR lightskyblue][B]YOU CAN PRESS NO AND ATTEMPT THE AUTO SWITCH AGAIN IF YOU WISH[/B][/COLOR]', yeslabel='[B][COLOR green]YES[/COLOR][/B]',nolabel='[B][COLOR lightskyblue]NO[/COLOR][/B]')
-        if choice == 1:
+    # Verify
+    new_skin = xbmc.getSkinDir()
+    if new_skin not in ['skin.confluence', 'skin.estuary']:
+        if DIALOG.yesno(ADDON_TITLE, '[COLOR red]Auto-switch failed.[/COLOR]\nOpen Appearance Settings to switch manually?', yeslabel='Yes', nolabel='No'):
             xbmc.executebuiltin("ActivateWindow(appearancesettings)")
-            return
         else:
-            sys.exit(1)
+            return # Failure
 
+# --- BACKUP ---
 
-# BACKUP ZIP
 def backup(mode='full'):
-    KODIV = get_Kodi_Version()
-
-    backupdir = control.setting('download.path')
-    if backupdir == '' or backupdir == None:
-        control.infoDialog('Please Setup a Path for Downlads first')
+    backup_path = control.setting('download.path')
+    
+    if not backup_path:
+        control.infoDialog('Please setup a Backup Path first in Settings')
         control.openSettings(query='1.3')
         return
 
     if mode == 'full':
-        defaultName    =  "kodi_backup"
-        BACKUPDATA     =  control.HOME
-        getSetting = xbmcaddon.Addon().getSetting
-        if getSetting('BackupFixSpecialHome') == 'true':
-            FIX_SPECIAL()
+        default_name = "kodi_backup"
+        source_folder = HOME_PATH
+        if control.setting('BackupFixSpecialHome') == 'true':
+            fix_special_paths()
     elif mode == 'userdata':
-        defaultName    =  "kodi_settings"
-        BACKUPDATA     =  control.USERDATA
-    else: return
-    if os.path.exists(BACKUPDATA):
-        if not backupdir == '':
-            name = tools._get_keyboard(default=defaultName, heading='Name your Backup', cancel="-")
-            if name != "-":
-                today = datetime.now().strftime('%Y%m%d%H%M')
-                today = re.sub('[^0-9]', '', str(today))
-                zipDATE = "_%s.zip" % today
-                name = re.sub(' ','_', name) + zipDATE
-                backup_zip = translatePath(os.path.join(backupdir, name))
-                exclude_database = ['.pyo','.log']
+        default_name = "kodi_settings"
+        source_folder = USERDATA_PATH
+    else:
+        return
 
-                try:
-                    maintenance.clearCache(mode='silent')
-                    maintenance.deleteThumbnails(mode='silent')
-                    maintenance.purgePackages(mode='silent')
-                except:pass
+    if os.path.exists(source_folder):
+        name = tools._get_keyboard(default=default_name, heading='Name your Backup')
+        if not name: 
+            return
 
-                exclude_dirs = ['']
-                canceled = CreateZip(BACKUPDATA, backup_zip, 'Creating Backup', 'Backing up files', exclude_dirs, exclude_database)
-                if canceled:
-                    os.unlink(backup_zip)
-                    dialog.ok(AddonTitle,'Backup canceled')
-                else:
-                    dialog.ok(AddonTitle,'Backup complete')
+        # Sanitize name and add timestamp
+        name = name.replace(' ', '_')
+        timestamp = datetime.now().strftime('%Y%m%d%H%M')
+        zip_name = f"{name}_{timestamp}.zip"
+        zip_full_path = os.path.join(backup_path, zip_name)
+
+        # Cleanup before backup
+        try:
+            maintenance.clearCache(mode='silent')
+            maintenance.deleteThumbnails(mode='silent')
+            maintenance.purgePackages(mode='silent')
+        except: pass
+
+        # Create Zip
+        exclude_dirs = [] 
+        exclude_files = ['.pyo', '.log', '.zip'] # Don't zip logs or other zips
+        
+        canceled = create_zip(source_folder, zip_full_path, 'Creating Backup', exclude_dirs, exclude_files)
+        
+        if canceled:
+            if os.path.exists(zip_full_path):
+                os.unlink(zip_full_path)
+            DIALOG.ok(ADDON_TITLE, 'Backup Canceled')
         else:
-           dialog.ok(AddonTitle,'No backup location found: Please setup your Backup location')
+            DIALOG.ok(ADDON_TITLE, f'Backup Complete!\nSaved to: {zip_name}')
+    else:
+        DIALOG.ok(ADDON_TITLE, 'Source folder not found.')
+
+# --- RESTORE ---
 
 def restoreFolder():
-    names = []
-    links = []
-    zipFolder = control.setting('restore.path')
-    if zipFolder == '' or zipFolder == None:
-        control.infoDialog('Please Setup a Zip Files Location first')
+    zip_folder = control.setting('restore.path')
+    if not zip_folder:
+        control.infoDialog('Please setup a Restore Path first in Settings')
         control.openSettings(query='2.0')
         return
-    for zipFile in os.listdir(zipFolder):
-            if zipFile.endswith(".zip"):
-                url = translatePath(os.path.join(zipFolder, zipFile))
-                names.append(zipFile)
-                links.append(url)
-    select = control.selectDialog(names)
-    if select != -1: restore(links[select])
 
-def restore(zipFile):
-    yesDialog = dialog.yesno(AddonTitle, 'This will overwrite all your current settings ... Are you sure?', yeslabel='Yes', nolabel='No')
-    if yesDialog:
-        try:
-            dp = xbmcgui.DialogProgress()
-            dp.create("Restoring File","In Progress..." + '\n' + "Please Wait")
-            dp.update(0, "" + '\n' + "Extracting Zip Please Wait")
-            canceled = ExtractZip(zipFile, control.HOME, dp)
-            if canceled:
-                dialog.ok(AddonTitle,'Restore Canceled')
-            else:
-                dialog.ok(AddonTitle,'Restore Complete')
-            xbmc.executebuiltin('ShutDown')
-        except:pass
+    # List Zips
+    zip_files = [f for f in os.listdir(zip_folder) if f.endswith(".zip")]
+    
+    if not zip_files:
+        DIALOG.ok(ADDON_TITLE, 'No Zip files found in restore folder.')
+        return
 
+    select = DIALOG.select("Select Backup to Restore", zip_files)
+    if select != -1:
+        restore_file = os.path.join(zip_folder, zip_files[select])
+        restore(restore_file)
 
+def restore(zip_file_path):
+    if not DIALOG.yesno(ADDON_TITLE, 'Restore this backup?\n[COLOR red]This will overwrite your current setup![/COLOR]', yeslabel='Yes', nolabel='No'):
+        return
 
-def CreateZip(folder, zip_filename, message_header, message1, exclude_dirs, exclude_files):
-    abs_src = os.path.abspath(folder)
-    for_progress = []
-    ITEM =[]
     dp = xbmcgui.DialogProgress()
-    dp.create(message_header, message1)
-    try: os.remove(zip_filename)
-    except: pass
-    for base, dirs, files in os.walk(folder):
-        for file in files: ITEM.append(file)
-    N_ITEM =len(ITEM)
-    count = 0
-    canceled = False
-    zip_file = zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED, allowZip64 = True)
-    for dirpath, dirnames, filenames in os.walk(folder):
-        if canceled:
-            break
-        try:
-            dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
-            filenames[:] = [f for f in filenames if f not in exclude_files]
+    dp.create("Restoring", "Initializing...")
+    
+    try:
+        canceled = extract_zip(zip_file_path, HOME_PATH, dp)
+        dp.close()
 
-            for file in filenames:
+        if canceled:
+            DIALOG.ok(ADDON_TITLE, 'Restore Canceled')
+        else:
+            DIALOG.ok(ADDON_TITLE, 'Restore Complete.\nKodi will now close.')
+            xbmc.executebuiltin('ShutDown') # Works on most OS (Android/Windows)
+            xbmc.executebuiltin('Quit')     # Fallback
+    except Exception as e:
+        DIALOG.ok(ADDON_TITLE, f"Restore Failed:\n{str(e)}")
+
+
+# --- ZIP HELPERS ---
+
+def create_zip(folder_path, zip_filename, message_header, exclude_dirs, exclude_files):
+    abs_src = os.path.abspath(folder_path)
+    
+    dp = xbmcgui.DialogProgress()
+    dp.create(message_header, "Scanning files...")
+    
+    # 1. Count files for progress bar
+    total_files = 0
+    file_list = []
+    
+    for root, dirs, files in os.walk(folder_path):
+        # Filter Excludes in-place
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        files = [f for f in files if f not in exclude_files]
+        
+        for f in files:
+            total_files += 1
+            file_path = os.path.join(root, f)
+            file_list.append(file_path)
+
+    # 2. Zip It
+    canceled = False
+    count = 0
+    
+    try:
+        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for file_path in file_list:
                 if dp.iscanceled():
                     canceled = True
                     break
+                
                 count += 1
-                for_progress.append(file)
-                progress = len(for_progress) / float(N_ITEM) * 100
-                if PY2:
-                    dp.update(int(progress),"Backing Up", 'FILES: ' + str(count) + '/' + str(N_ITEM)  + '   [COLOR lime]' + str(file) + '[/COLOR]', 'Please Wait')
-                else:
-                    dp.update(int(progress),"Backing Up" + '\n' + 'FILES: ' + str(count) + '/' + str(N_ITEM)  + '   [COLOR lime]' + str(file) + '[/COLOR]' + '\n' + 'Please Wait')
-                file = os.path.join(dirpath, file)
-                file = os.path.normpath(file)
-                arcname = file[len(abs_src) + 1:]
-                zip_file.write(file, arcname)
-        except:pass
-    zip_file.close()
-
-    return canceled
-
-# EXTRACT ZIP
-def ExtractZip(_in, _out, dp=None):
-    if dp: return ExtractWithProgress(_in, _out, dp)
-    return ExtractNOProgress(_in, _out)
-
-def ExtractNOProgress(_in, _out):
-    canceled = False
-
-    try:
-        zin = zipfile.ZipFile(_in, 'r')
-        zin.extractall(_out)
+                filename = os.path.basename(file_path)
+                percent = int((count / total_files) * 100)
+                
+                dp.update(percent, f"Backing Up: {count}/{total_files}\n[COLOR lime]{filename}[/COLOR]")
+                
+                # Calculate relative path for zip structure
+                arcname = file_path.replace(abs_src, "")
+                zf.write(file_path, arcname)
+                
     except Exception as e:
-        print(str(e))
+        control.infoDialog(f"Zip Error: {str(e)}", icon='ERROR')
+        canceled = True
+
+    dp.close()
     return canceled
 
-def ExtractWithProgress(_in, _out, dp):
-    zin = zipfile.ZipFile(_in,  'r')
-    nFiles = float(len(zin.infolist()))
-    count  = 0
-    errors = 0
-    canceled = False
+def extract_zip(zip_file, destination, dp):
     try:
-        for item in zin.infolist():
-            canceled = dp.iscanceled()
-            if canceled:
-                break
-            count += 1
-            update = count / nFiles * 100
-            try: name = os.path.basename(item.filename)
-            except: name = item.filename
-            label = '[COLOR skyblue][B]%s[/B][/COLOR]' % str(name)
-            if PY2:
-                dp.update(int(update),'Extracting... Errors:  ' + str(errors) , label, '')
-            else:
-                dp.update(int(update),'Extracting... Errors:  ' + str(errors) + '\n' + label)
-            try: zin.extract(item, _out)
-            except Exception as e:
-                print ("EXTRACTING ERRORS", e)
-                pass
-
+        with zipfile.ZipFile(zip_file, 'r') as zin:
+            file_list = zin.infolist()
+            total_files = len(file_list)
+            count = 0
+            
+            for item in file_list:
+                if dp.iscanceled():
+                    return True
+                
+                count += 1
+                percent = int((count / total_files) * 100)
+                
+                dp.update(percent, f"Extracting: {count}/{total_files}\n[COLOR skyblue]{item.filename}[/COLOR]")
+                
+                try:
+                    zin.extract(item, destination)
+                except Exception:
+                    pass # Skip unextractable files (permissions etc)
+                    
     except Exception as e:
-        print(str(e))
-    return canceled
+        print(f"Extraction Error: {e}")
+        return True # Treat as canceled/failed
 
-# INSTALL BUILD
+    return False
+
+# --- DOWNLOADER / INSTALLER ---
+
 def buildInstaller(url):
-    destination = dialog.browse(type=0, heading='Select Download Directory', shares='files',useThumbs=True, treatAsFolder=True, enableMultiple=False)
-    if destination:
-        dest = translatePath(os.path.join(destination, 'custom_build.zip'))
-        downloader(url, dest)
-        time.sleep(2)
-        dp.create("Installing Build","In Progress..." + '\n' + "Please Wait")
-        dp.update(0, "" + '\n' + "Extracting Zip Please Wait")
-        ExtractZip(dest, control.HOME, dp)
-        time.sleep(2)
+    # Ask where to download the temp zip
+    # Note: Usually wizards download to packages folder to be clean.
+    # The original code asked the user. We will stick to that or default to packages.
+    
+    destination_dir = DIALOG.browse(0, 'Select Download Temp Folder', 'files', '', False, False)
+    if not destination_dir:
+        destination_dir = control.PACKAGES_PATH # Fallback to internal packages
+    
+    dest_file = os.path.join(destination_dir, 'custom_build.zip')
+    
+    # Download
+    dp = xbmcgui.DialogProgress()
+    dp.create(ADDON_TITLE, "Downloading Build...")
+    
+    success = download_file(url, dest_file, dp)
+    
+    if success:
+        # Extract
+        dp.update(0, "Extracting Build...")
+        canceled = extract_zip(dest_file, HOME_PATH, dp)
         dp.close()
-        dialog.ok(AddonTitle,'Installation Complete...' + '\n' + 'Your interface will now be reset' + '\n' + 'Click ok to Start...')
-        xbmc.executebuiltin('LoadProfile(Master user)')
-# DOWNLOADER
-class customdownload(FancyURLopener):
-    version = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11'
+        
+        if not canceled:
+            DIALOG.ok(ADDON_TITLE, 'Installation Complete.\nKodi will now reset.')
+            xbmc.executebuiltin('LoadProfile(Master user)')
+    else:
+        dp.close()
+        DIALOG.ok(ADDON_TITLE, "Download Failed")
 
-def downloader(url, dest, dp = None):
-    if not dp:
-        dp = xbmcgui.DialogProgress()
-        dp.create(AddonTitle)
-    dp.update(0)
-    start_time=time.time()
-    customdownload().retrieve(url, dest, lambda nb, bs, fs, url=url: _pbhook(nb, bs, fs, dp, start_time))
-
-def _pbhook(numblocks, blocksize, filesize, dp, start_time):
-        try:
-            percent = min(numblocks * blocksize * 100 / filesize, 100)
-            currently_downloaded = float(numblocks) * blocksize / (1024 * 1024)
-            kbps_speed = numblocks * blocksize / (time.time() - start_time)
-            if kbps_speed > 0:
-                eta = (filesize - numblocks * blocksize) / kbps_speed
+def download_file(url, dest_path, dp):
+    start_time = time.time()
+    
+    try:
+        # Create a custom opener to spoof User-Agent (avoid 403 Forbidden)
+        opener = urllib.request.build_opener()
+        opener.addheaders = [('User-agent', 'Mozilla/5.0 (Kodi; EZMaintenance+)')]
+        urllib.request.install_opener(opener)
+        
+        # Define progress hook
+        def report_hook(count, block_size, total_size):
+            if dp.iscanceled():
+                raise Exception("Canceled")
+                
+            percent = int(count * block_size * 100 / total_size)
+            
+            # Speed Calc
+            duration = time.time() - start_time
+            if duration > 0:
+                speed = (count * block_size) / duration / 1024 # KB/s
+                speed_str = f"{speed:.2f} KB/s"
             else:
-                eta = 0
-            kbps_speed = kbps_speed / 1024
-            total = float(filesize) / (1024 * 1024)
-            mbs = '%.02f MB of %.02f MB' % (currently_downloaded, total)
-            e = 'Speed: %.02f Kb/s ' % kbps_speed
-            e += 'ETA: %02d:%02d' % divmod(eta, 60)
-            string = 'Downloading... Please Wait...'
-            dp.update(percent, mbs + '\n' + e + '\n' + string)
-        except:
-            percent = 100
-            dp.update(percent)
-            dp.close()
-            return
+                speed_str = "..."
 
-        if dp.iscanceled():
-            raise Exception("Canceled")
-            dp.close()
+            dp.update(percent, f"Downloading...\nSpeed: {speed_str}")
 
-##############################    END    #########################################
+        # Execute
+        urllib.request.urlretrieve(url, dest_path, reporthook=report_hook)
+        return True
+
+    except Exception as e:
+        control.infoDialog(f"Download Error: {str(e)}", icon='ERROR')
+        return False

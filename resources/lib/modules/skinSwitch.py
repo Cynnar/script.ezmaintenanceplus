@@ -1,49 +1,54 @@
-"""
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+import xbmc
+import json
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
-import os, re, shutil, time, xbmc
-try:
-    import json as simplejson
-except:
-    import simplejson
-
-def getOld(old):
+def get_setting(setting_id):
+    """Retrieves a setting value via JSONRPC"""
     try:
-        old = '"%s"' % old
-        query = '{"jsonrpc":"2.0", "method":"Settings.GetSettingValue","params":{"setting":%s}, "id":1}' % (old)
-        response = xbmc.executeJSONRPC(query)
-        response = simplejson.loads(response)
-        if response.has_key('result'):
-            if response['result'].has_key('value'):
-                return response ['result']['value']
-    except:
+        # Construct the payload
+        # Note: In newer Kodi versions (19+), Settings.GetSettingValue is correct.
+        query = {
+            "jsonrpc": "2.0", 
+            "method": "Settings.GetSettingValue", 
+            "params": {"setting": setting_id}, 
+            "id": 1
+        }
+        
+        response_str = xbmc.executeJSONRPC(json.dumps(query))
+        response = json.loads(response_str)
+        
+        # Python 3 check (has_key is dead)
+        if 'result' in response:
+            if 'value' in response['result']:
+                return response['result']['value']
+                
+    except Exception as e:
+        xbmc.log(f"skinSwitch Error (Get): {str(e)}", level=xbmc.LOGERROR)
         pass
+        
     return None
 
-def setNew(new, value):
+def set_setting(setting_id, value):
+    """Sets a setting value via JSONRPC"""
     try:
-        new = '"%s"' % new
-        value = '"%s"' % value
-        query = '{"jsonrpc":"2.0", "method":"Settings.SetSettingValue","params":{"setting":%s,"value":%s}, "id":1}' % (new, value)
-        response = xbmc.executeJSONRPC(query)
-    except:
+        query = {
+            "jsonrpc": "2.0", 
+            "method": "Settings.SetSettingValue", 
+            "params": {"setting": setting_id, "value": value}, 
+            "id": 1
+        }
+        
+        xbmc.executeJSONRPC(json.dumps(query))
+        
+    except Exception as e:
+        xbmc.log(f"skinSwitch Error (Set): {str(e)}", level=xbmc.LOGERROR)
         pass
-    return None
 
-def swapSkins(skin):
-    old = 'lookandfeel.skin'
-    value = skin
-    current = getOld(old)
-    new = old
-    setNew(new, value)
+def swapSkins(skin_id):
+    """Switches the Kodi skin to the specified ID (e.g., skin.estuary)"""
+    setting_key = 'lookandfeel.skin'
+    
+    # Optional: Check current skin first to avoid redundant switch
+    current_skin = get_setting(setting_key)
+    
+    if current_skin != skin_id:
+        set_setting(setting_key, skin_id)

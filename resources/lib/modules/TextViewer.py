@@ -1,103 +1,105 @@
-import os
-import string
 import xbmc
 import xbmcaddon
 import xbmcgui
-from resources.lib.modules.backtothefuture import PY2
+import os
 
-Addon = xbmcaddon.Addon()
-addon = Addon.getAddonInfo('id')
-addonName = Addon.getAddonInfo('name')
-moduleName = 'Log Viewer'
-dialog = xbmcgui.Dialog()
-contents = ''
-path = ''
+# --- Constants ---
+ADDON = xbmcaddon.Addon()
+ADDON_NAME = ADDON.getAddonInfo('name')
+ADDON_PATH = ADDON.getAddonInfo('path')
+MODULE_NAME = 'Log Viewer'
+DIALOG = xbmcgui.Dialog()
 
-# get actioncodes from keymap.xml
-ACTION_MOVE_LEFT = 1
-ACTION_MOVE_RIGHT = 2
-ACTION_MOVE_UP = 3
-ACTION_MOVE_DOWN = 4
-ACTION_PAGE_UP = 5
-ACTION_PAGE_DOWN = 6
-ACTION_SELECT_ITEM = 7
-
+# --- Globals (State for the Window) ---
+# We use these to pass data into the WindowXML class instance
+current_contents = ''
+current_path = ''
 
 class Viewer(xbmcgui.WindowXML):
     def __init__(self, strXMLname, strFallbackPath):
-        self.previous_menu = 10
-        self.back = 92
-        self.page_up = 5
-        self.page_down = 6
+        super().__init__(strXMLname, strFallbackPath)
+        
+        # Key Codes for Exit (Back, Previous Menu)
+        self.action_exit_keys = [10, 92]
 
-        # XML id's
-        self.main_window = 1100
+        # XML Control IDs (Must match textview-skin.xml)
         self.title_box_control = 20301
         self.content_box_control = 20302
-        self.list_box_control = 20303
-        self.line_number_box_control = 20201
         self.scroll_bar = 20212
+        self.refresh_button = 20293
 
     def onInit(self):
-        # title box
-        title_box = self.getControl(self.title_box_control)
-        title_box.setText(str.format('%s %s') % (addonName, moduleName))
+        # Set Title
+        try:
+            self.getControl(self.title_box_control).setText(f"{ADDON_NAME} - {MODULE_NAME}")
+        except: pass
 
-        # content box
-        content_box = self.getControl(self.content_box_control)
-        content_box.setText(contents)
+        # Set Content
+        try:
+            self.getControl(self.content_box_control).setText(current_contents)
+        except: pass
 
-        # Set initial focus
-        self.setFocusId(self.scroll_bar)
+        # Set initial focus to scrollbar so user can scroll immediately
+        try:
+            self.setFocusId(self.scroll_bar)
+        except: pass
 
     def onAction(self, action):
-        # non Display Button control
-        if action == self.previous_menu:
-            self.close()
-        elif action == self.back:
+        # Handle Back or Previous Menu
+        if action.getId() in self.action_exit_keys:
             self.close()
 
     def onClick(self, control_id):
-        if control_id == 20293:
+        # Handle Refresh Button
+        if control_id == self.refresh_button:
             self.close()
-            text_view(path)
-
-    def onFocus(self, control_id):
-        pass
-
+            # Reload the view
+            text_view(current_path)
 
 def text_view(loc='', data=''):
-    global contents
-    global path
-    contents = ''
-    path = loc
-    # todo, path can be a url to an internet file
-    if not path and not data: return
-    if path and not data:
-        if 'http' in path.lower():
-            # todo, open internet files from a url path
-            dialog.ok('Notice', 'This feature is not yet available')
-            return
-        # Open and read the file from path location
-        temp_file = open(path, 'rb')
-        contents = temp_file.read()
-        temp_file.close()
-    # Send contents to text display function
-    elif data:
-        contents = data
-    if not contents:
-        dialog.ok('Notice', 'The file was empty')
-        return
-    #contents = str(contents)
-    if not  PY2:
-        contents = contents.decode('UTF-8')
-    contents = contents.replace(' ERROR: ', ' [COLOR red]ERROR[/COLOR]: ') \
-        .replace(' WARNING: ', ' [COLOR gold]WARNING[/COLOR]: ')
+    global current_contents
+    global current_path
+    
+    current_contents = ''
+    current_path = loc
 
-    win = Viewer('textview-skin.xml', Addon.getAddonInfo('path'))
+    # Validate inputs
+    if not loc and not data:
+        return
+
+    # Case 1: Load from File Path
+    if loc and not data:
+        if loc.lower().startswith('http'):
+            DIALOG.ok(ADDON_NAME, 'Remote URL viewing not supported yet.')
+            return
+            
+        if not os.path.exists(loc):
+            DIALOG.ok(ADDON_NAME, f'File not found:\n{loc}')
+            return
+
+        try:
+            # Open with 'ignore' to skip unreadable characters in logs (Fixes crashes)
+            with open(loc, 'r', encoding='utf-8', errors='ignore') as f:
+                current_contents = f.read()
+        except Exception as e:
+            DIALOG.ok(ADDON_NAME, f"Error reading file:\n{str(e)}")
+            return
+
+    # Case 2: Load from Data string directly
+    elif data:
+        current_contents = data
+
+    # Empty check
+    if not current_contents:
+        DIALOG.ok(ADDON_NAME, 'The file is empty.')
+        return
+
+    # Colorize Errors and Warnings for better readability
+    current_contents = current_contents.replace(' ERROR: ', ' [COLOR red]ERROR[/COLOR]: ')
+    current_contents = current_contents.replace(' WARNING: ', ' [COLOR gold]WARNING[/COLOR]: ')
+
+    # Launch the Window
+    # Note: 'textview-skin.xml' must exist in your resources/skins/ folder
+    win = Viewer('textview-skin.xml', ADDON_PATH)
     win.doModal()
     del win
-
-# To call module put the following in the addon list or context menu
-# import TextViewer
-# TextViewer.text_view('log')
